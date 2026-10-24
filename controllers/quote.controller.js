@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import Quote from '../models/Quote.js';
 import { generateUniqueReference } from '../utils/referenceGenerator.js';
-import { sendQuoteNotifications } from '../utils/emailService.js';
+import { sendQuoteNotifications, sendQuoteCancellationEmail } from '../utils/emailService.js';
 
 // 1. Submit Quote
 export const createQuote = async (req, res) => {
@@ -62,23 +62,29 @@ export const getQuoteById = async (req, res) => {
   }
 };
 
-// 4. Update Quote
-export const updateQuote = async (req, res) => {
-  try {
-    const updated = await Quote.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true, runValidators: true });
-    if (!updated) return res.status(404).json({ success: false, message: 'Quote not found.' });
-    res.status(200).json({ success: true, message: 'Quote updated successfully', data: updated });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// 5. Delete Quote
+// 4. Delete Quote (and send cancellation email to customer)
 export const deleteQuote = async (req, res) => {
   try {
-    const deleted = await Quote.findByIdAndDelete(req.params.id);
+    const { id } = req.params;
+    const isObjectId = mongoose.Types.ObjectId.isValid(id);
+    const deleted = isObjectId
+      ? await Quote.findByIdAndDelete(id)
+      : await Quote.findOneAndDelete({ reference: id });
+
     if (!deleted) return res.status(404).json({ success: false, message: 'Quote not found.' });
-    res.status(200).json({ success: true, message: 'Quote deleted successfully' });
+
+    // Send cancellation email if customer email exists
+    if (deleted.contact?.email) {
+      sendQuoteCancellationEmail(deleted).catch((err) =>
+        console.error('Cancellation email notification error:', err.message)
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Quote cancelled/deleted successfully, and notification email sent to customer.',
+      reference: deleted.reference,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

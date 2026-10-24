@@ -86,3 +86,34 @@ export const sendQuoteNotifications = async (quote) => {
     transporter.sendMail(adminMailOptions),
   ]);
 };
+
+/**
+ * Send cancellation email notification to Customer when quote is deleted/cancelled
+ */
+export const sendQuoteCancellationEmail = async (quote) => {
+  const { reference, brand, model, contact } = quote;
+
+  if (!contact?.email) return;
+
+  const mailOptions = {
+    from: `"Sole Mission" <${process.env.EMAIL_USER?.trim()}>`,
+    to: contact.email,
+    subject: `Quote Request Cancelled [${reference}] - Sole Mission`,
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #222; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+        <h2 style="color: #c9302c; margin-bottom: 5px;">Sole Mission Restoration</h2>
+        <p>Hi <strong>${contact.fullName || 'Valued Customer'}</strong>,</p>
+        <p>This is to inform you that your quote request for sneaker restoration has been <strong>cancelled</strong>.</p>
+        <div style="background: #fdf7f7; border-left: 4px solid #d9534f; padding: 15px; border-radius: 4px; margin: 15px 0;">
+          <p style="margin: 0 0 8px;"><strong>Quote Reference:</strong> <span style="color: #0066cc;">${reference}</span></p>
+          <p style="margin: 0;"><strong>Sneaker:</strong> ${brand || ''} ${model ? `- ${model}` : ''}</p>
+        </div>
+        <p>If you have any questions or feel this was done in error, please reach out to us or submit a new quote request anytime.</p>
+        <p style="font-size: 13px; color: #777; margin-top: 25px;">Sole Mission • Premium Sneaker Care & Restoration</p>
+      </div>
+    `,
+  };
+
+  return await transporter.sendMail(mailOptions);
+};
+
