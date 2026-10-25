@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import uploadRoutes from './routes/upload.route.js';
 import quoteRoutes from './routes/quote.route.js';
+import authRoutes from './routes/auth.route.js';
 
 // Load environment variables
 dotenv.config();
@@ -14,6 +15,7 @@ const PORT = process.env.PORT || 8000;
 // CORS configuration
 const allowedOrigins = [
   'http://localhost:3000',
+  'http://localhost:3001',
   'https://sole-mission-gules.vercel.app',
   'https://sole-mission.mohinr26.workers.dev',
   'https://solemission.ca',
@@ -47,6 +49,7 @@ app.get('/', (req, res) => {
 // Application Routes
 app.use('/api/upload', uploadRoutes);
 app.use('/api/quotes', quoteRoutes);
+app.use('/api/auth', authRoutes);
 
 // MongoDB Connection
 const connectDB = async () => {

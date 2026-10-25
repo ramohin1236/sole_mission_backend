@@ -6,13 +6,17 @@ import {
   deleteQuote,
 } from '../controllers/quote.controller.js';
 import { validateQuoteInput } from '../middlewares/quoteValidator.js';
+import { protect, adminOnly } from '../middlewares/auth.middleware.js';
 
 const router = express.Router();
 
+// Public: Customer submits quote from website
 router.post('/', validateQuoteInput, createQuote);
-router.get('/', getAllQuotes);
-router.get('/:id', getQuoteById);
-router.get('/reference/:id', getQuoteById);
-router.delete('/:id', deleteQuote);
+
+// Admin Only: Single and All Quotes retrieval & Delete
+router.get('/', protect, adminOnly, getAllQuotes);
+router.get('/:id', protect, adminOnly, getQuoteById);
+router.get('/reference/:id', protect, adminOnly, getQuoteById);
+router.delete('/:id', protect, adminOnly, deleteQuote);
 
 export default router;
