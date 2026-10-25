@@ -117,3 +117,50 @@ export const sendQuoteCancellationEmail = async (quote) => {
   return await transporter.sendMail(mailOptions);
 };
 
+/**
+ * Send Password Reset OTP email notification
+ */
+export const sendPasswordResetOtpEmail = async ({ email, otp, name }) => {
+  const mailOptions = {
+    from: `"Sole Mission Security" <${process.env.EMAIL_USER?.trim()}>`,
+    to: email,
+    subject: `Your Password Reset Code [${otp}] - Sole Mission`,
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; max-width: 540px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background-color: #ffffff;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <h2 style="color: #111827; margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px;">Sole Mission</h2>
+          <p style="color: #6b7280; margin: 4px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;">Security Verification</p>
+        </div>
+
+        <p style="font-size: 15px; margin: 0 0 12px;">Hi <strong>${name || 'User'}</strong>,</p>
+        <p style="font-size: 14px; color: #4b5563; margin: 0 0 20px;">
+          We received a request to reset or update your password. Please use the verification code below to proceed:
+        </p>
+
+        <div style="background-color: #f9fafb; border: 2px dashed #111827; border-radius: 10px; padding: 20px; text-align: center; margin: 24px 0;">
+          <div style="font-size: 36px; font-weight: 800; letter-spacing: 10px; color: #111827; font-family: 'Courier New', monospace;">
+            ${otp}
+          </div>
+          <p style="font-size: 12px; color: #dc2626; font-weight: 600; margin: 10px 0 0;">
+            ⏱ This code is valid for 10 minutes only
+          </p>
+        </div>
+
+        <p style="font-size: 13px; color: #6b7280; margin: 20px 0 0;">
+          If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged.
+        </p>
+
+        <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 24px 0 16px;" />
+
+        <div style="text-align: center;">
+          <p style="font-size: 12px; color: #9ca3af; margin: 0;">
+            Sole Mission • Premium Sneaker Care & Restoration
+          </p>
+        </div>
+      </div>
+    `,
+  };
+
+  return await transporter.sendMail(mailOptions);
+};
+

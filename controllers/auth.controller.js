@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import { sendPasswordResetOtpEmail } from '../utils/emailService.js';
 
 /**
  * Generate JWT Token helper
@@ -153,6 +154,261 @@ export const getAuthStatus = async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       success: false,
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Send OTP to email for password reset / update
+ * @route   POST /api/auth/send-otp
+ * @access  Public
+ */
+export const sendPasswordResetOtp = async (req, res) => {
+  try {
+    const email = req.body.email || req.user?.email;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email address is required.',
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'No user account found with this email address.',
+      });
+    }
+
+    // Generate 6-digit numeric OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Hash OTP before saving to database
+    const salt = await bcrypt.genSalt(10);
+    const hashedOtp = await bcrypt.hash(otp, salt);
+
+    // Save hashed OTP with 10-minute validity
+    user.resetPasswordOtp = hashedOtp;
+    user.resetPasswordOtpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    await user.save();
+
+    // Send the OTP via email
+    await sendPasswordResetOtpEmail({
+      email: user.email,
+      otp,
+      name: user.name,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'OTP has been sent to your email. Please check your inbox.',
+    });
+  } catch (error) {
+    console.error('Send OTP error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send OTP to email.',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Verify OTP code
+ * @route   POST /api/auth/verify-otp
+ * @access  Public
+ */
+export const verifyOtp = async (req, res) => {
+  try {
+    const email = req.body.email || req.user?.email;
+    const { otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both email and 6-digit OTP code are required.',
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user || !user.resetPasswordOtp || !user.resetPasswordOtpExpires) {
+      return res.status(400).json({
+        success: false,
+        message: 'No active OTP request found. Please request a new code.',
+      });
+    }
+
+    // Check expiration
+    if (new Date() > new Date(user.resetPasswordOtpExpires)) {
+      user.resetPasswordOtp = null;
+      user.resetPasswordOtpExpires = null;
+      await user.save();
+      return res.status(400).json({
+        success: false,
+        message: 'OTP has expired. Please request a new code.',
+      });
+    }
+
+    // Compare hashed OTP
+    const isMatch = await bcrypt.compare(String(otp).trim(), user.resetPasswordOtp);
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid OTP code. Please check and try again.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'OTP verified successfully.',
+    });
+  } catch (error) {
+    console.error('Verify OTP error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while verifying OTP.',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Reset or update password using OTP
+ * @route   POST /api/auth/reset-password
+ * @access  Public
+ */
+export const resetPassword = async (req, res) => {
+  try {
+    const email = req.body.email || req.user?.email;
+    const { otp, newPassword, password } = req.body;
+    const finalPassword = newPassword || password;
+
+    if (!email || !otp || !finalPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email, OTP, and new password are required.',
+      });
+    }
+
+    if (finalPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters.',
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user || !user.resetPasswordOtp || !user.resetPasswordOtpExpires) {
+      return res.status(400).json({
+        success: false,
+        message: 'No active OTP request found. Please request a new code.',
+      });
+    }
+
+    // Check expiration
+    if (new Date() > new Date(user.resetPasswordOtpExpires)) {
+      user.resetPasswordOtp = null;
+      user.resetPasswordOtpExpires = null;
+      await user.save();
+      return res.status(400).json({
+        success: false,
+        message: 'OTP has expired. Please request a new code.',
+      });
+    }
+
+    // Validate OTP
+    const isMatch = await bcrypt.compare(String(otp).trim(), user.resetPasswordOtp);
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid OTP code. Password was not updated.',
+      });
+    }
+
+    // Hash new password and save
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(finalPassword, salt);
+
+    // Invalidate the OTP so it cannot be reused
+    user.resetPasswordOtp = null;
+    user.resetPasswordOtpExpires = null;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password has been updated successfully. You can now login with your new password.',
+    });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while updating password.',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Change password directly for logged-in user
+ * @route   PUT /api/auth/change-password
+ * @access  Private
+ */
+export const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current password and new password are required.',
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 6 characters.',
+      });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found.',
+      });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current password is incorrect.',
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password changed successfully.',
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while changing password.',
       error: error.message,
     });
   }

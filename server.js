@@ -51,6 +51,20 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/quotes', quoteRoutes);
 app.use('/api/auth', authRoutes);
 
+// Global Error Handling Middleware
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid JSON payload received.',
+    });
+  }
+  return res.status(err.status || 500).json({
+    success: false,
+    message: err.message || 'Internal server error.',
+  });
+});
+
 // MongoDB Connection
 const connectDB = async () => {
   try {
