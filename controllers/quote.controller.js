@@ -13,7 +13,7 @@ export const createQuote = async (req, res) => {
     }
 
     const quote = await Quote.create({ ...payload, reference, status: 'pending' });
-    sendQuoteNotifications(quote).catch((err) => console.error('Email notification error:', err.message));
+    await sendQuoteNotifications(quote).catch((err) => console.error('Email notification error:', err.message));
     res.status(201).json({ success: true, message: 'Quote submitted successfully', reference, data: quote });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -75,7 +75,7 @@ export const deleteQuote = async (req, res) => {
 
     // Send cancellation email if customer email exists
     if (deleted.contact?.email) {
-      sendQuoteCancellationEmail(deleted).catch((err) =>
+      await sendQuoteCancellationEmail(deleted).catch((err) =>
         console.error('Cancellation email notification error:', err.message)
       );
     }
