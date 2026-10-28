@@ -18,14 +18,90 @@ const formatCAD = (est) => {
 };
 
 /**
+ * Extract photo details (label, url) from quote.photos
+ * Supports both slot-based objects and arrays of photo objects / strings
+ */
+const extractPhotoList = (photos) => {
+  if (!photos) return [];
+  const rawPhotos = typeof photos?.toObject === 'function' ? photos.toObject() : photos;
+
+  if (Array.isArray(rawPhotos)) {
+    return rawPhotos
+      .map((item, idx) => {
+        if (!item) return null;
+        if (typeof item === 'string') {
+          return { label: `Photo ${idx + 1}`, url: item };
+        }
+        const url = item.previewUrl || item.url || item.secure_url;
+        const label = item.slot || item.fileName || `Photo ${idx + 1}`;
+        return url ? { label, url } : null;
+      })
+      .filter(Boolean);
+  }
+
+  if (typeof rawPhotos === 'object') {
+    return Object.entries(rawPhotos)
+      .map(([slot, p]) => {
+        if (!p) return null;
+        if (typeof p === 'string') {
+          return {
+            label: slot.charAt(0).toUpperCase() + slot.slice(1),
+            url: p,
+          };
+        }
+        const url = p.previewUrl || p.url || p.secure_url;
+        const label = slot.charAt(0).toUpperCase() + slot.slice(1);
+        return url ? { label, url, fileName: p.fileName } : null;
+      })
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
+/**
+ * Render uploaded Cloudinary photos as clickable links and thumbnails in email HTML
+ */
+const renderPhotosHtml = (photos) => {
+  const photoItems = extractPhotoList(photos);
+  if (!photoItems.length) return '';
+
+  const thumbnailCards = photoItems
+    .map(
+      (item) => `
+        <div style="display: inline-block; margin: 6px; text-align: center; vertical-align: top; width: 105px;">
+          <a href="${item.url}" target="_blank" rel="noopener noreferrer" style="text-decoration: none; display: block;">
+            <img src="${item.url}" alt="${item.label}" style="width: 100px; height: 100px; object-fit: cover; border-radius: 6px; border: 1px solid #d1d5db; display: block; margin: 0 auto 6px;" />
+            <span style="font-size: 12px; font-weight: 600; color: #1f2937; display: block; text-transform: capitalize; margin-bottom: 2px;">${item.label}</span>
+            <span style="font-size: 11px; color: #2563eb; text-decoration: underline; display: block;">View Photo ↗</span>
+          </a>
+        </div>
+      `
+    )
+    .join('');
+
+  return `
+    <div style="margin: 18px 0; padding: 15px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 6px;">
+      <h4 style="margin: 0 0 12px; font-size: 14px; color: #374151; text-transform: uppercase; letter-spacing: 0.5px;">
+        Uploaded Sneaker Photos (${photoItems.length}):
+      </h4>
+      <div style="text-align: left;">
+        ${thumbnailCards}
+      </div>
+    </div>
+  `;
+};
+
+/**
  * Send email notifications to both Customer and Admin/Receiver
  */
 export const sendQuoteNotifications = async (quote) => {
   const { reference, brand, model, condition, services, contact, turnaround, fulfillment, estimate, photos } = quote;
   const adminEmail = process.env.RECEIVER_EMAIL?.trim() || process.env.EMAIL_USER?.trim();
   const formattedEstimate = formatCAD(estimate);
+  const photosHtml = renderPhotosHtml(photos);
 
-  // 1. Customer Confirmation Email
+  // 1. Customer Confirmation Email (No raw file attachments; Cloudinary URLs rendered in HTML body)
   const customerMailOptions = {
     from: `"Sole Mission" <${process.env.EMAIL_USER?.trim()}>`,
     to: contact.email,
@@ -42,18 +118,14 @@ export const sendQuoteNotifications = async (quote) => {
           <p style="margin: 0 0 8px;"><strong>Estimated Price:</strong> ${formattedEstimate}</p>
           <p style="margin: 0;"><strong>Fulfillment:</strong> ${fulfillment === 'dropoff' ? 'Drop-off' : 'Mail-in'} (${turnaround} turnaround)</p>
         </div>
+        ${photosHtml}
         <p>Our team is currently reviewing your photos. We will reach out to you via <strong>${contact.phone}</strong> or email shortly.</p>
         <p style="font-size: 13px; color: #777; margin-top: 25px;">Sole Mission • Premium Sneaker Care & Restoration</p>
       </div>
     `,
   };
 
-  // 2. Admin Notification Email
-  const photoList = Object.entries(photos || {})
-    .filter(([_, p]) => p?.previewUrl)
-    .map(([slot, p]) => `<li><strong>${slot}:</strong> <a href="${p.previewUrl}" target="_blank">View Photo</a></li>`)
-    .join('');
-
+  // 2. Admin Notification Email (No raw file attachments; Cloudinary URLs rendered in HTML body)
   const adminMailOptions = {
     from: `"Sole Mission Alerts" <${process.env.EMAIL_USER?.trim()}>`,
     to: adminEmail,
@@ -75,10 +147,14 @@ export const sendQuoteNotifications = async (quote) => {
           <p style="margin: 0 0 5px;"><strong>Estimate:</strong> ${formattedEstimate}</p>
           <p style="margin: 0;"><strong>Delivery:</strong> ${fulfillment} (${turnaround})</p>
         </div>
-        ${photoList ? `<h4>Uploaded Photos:</h4><ul>${photoList}</ul>` : ''}
+        ${photosHtml}
       </div>
     `,
   };
+
+  // Explicitly ensure attachments array is never included to avoid provider file size limits
+  delete customerMailOptions.attachments;
+  delete adminMailOptions.attachments;
 
   // Send both emails simultaneously
   return await Promise.all([
