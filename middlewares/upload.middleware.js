@@ -1,10 +1,10 @@
 import multer from 'multer';
 import { uploadToCloudinary } from '../config/cloudinary.js';
 
-// Multer setup with 1MB limit
+// Multer setup with 10MB limit
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 1024 * 1024 }, // 1 MB limit
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB limit
   fileFilter: (req, file, cb) => {
     file.mimetype?.startsWith('image/')
       ? cb(null, true)
@@ -17,7 +17,7 @@ const sendError = (err, res) => {
   if (err.code === 'LIMIT_FILE_SIZE') {
     return res.status(400).json({
       success: false,
-      message: 'Image size exceeds 1MB! Please upload an image under 1MB.',
+      message: 'Image size exceeds 10MB! Please upload an image under 10MB.',
     });
   }
   if (err.message === 'INVALID_IMAGE_TYPE') {

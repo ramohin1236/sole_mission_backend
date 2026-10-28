@@ -4,7 +4,7 @@ import { deleteFromCloudinary } from '../config/cloudinary.js';
 
 const router = express.Router();
 
-// Upload Single Image (Max 1MB)
+// Upload Single Image (Max 10MB)
 router.post('/single', uploadSingle('image', 'solemission/images'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'Please upload an image.' });
@@ -20,7 +20,7 @@ router.post('/single', uploadSingle('image', 'solemission/images'), (req, res) =
   });
 });
 
-// Upload Multiple Images (Max 5 images, each max 1MB)
+// Upload Multiple Images (Max 5 images, each max 10MB)
 router.post('/multiple', uploadMultiple('images', 5, 'solemission/gallery'), (req, res) => {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ success: false, message: 'Please upload at least one image.' });
