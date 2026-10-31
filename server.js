@@ -5,6 +5,7 @@ import mongoose from 'mongoose';
 import uploadRoutes from './routes/upload.route.js';
 import quoteRoutes from './routes/quote.route.js';
 import authRoutes from './routes/auth.route.js';
+import backupRoutes from './routes/backup.route.js';
 
 // Load environment variables
 dotenv.config();
@@ -50,6 +51,7 @@ app.get('/', (req, res) => {
 app.use('/api/upload', uploadRoutes);
 app.use('/api/quotes', quoteRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/backup', backupRoutes);
 
 // Global Error Handling Middleware
 app.use((err, req, res, next) => {
@@ -103,4 +105,6 @@ const startServer = async () => {
 };
 
 startServer();
+
+export default app;
 

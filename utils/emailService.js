@@ -242,3 +242,87 @@ export const sendPasswordResetOtpEmail = async ({ email, otp, name }) => {
   return await transporter.sendMail(mailOptions);
 };
 
+/**
+ * Send Database JSON Backup email notification with attachment
+ */
+export const sendBackupEmail = async ({
+  backupJsonString,
+  filename,
+  summary,
+}) => {
+  const adminEmail = process.env.RECEIVER_EMAIL?.trim() || process.env.EMAIL_USER?.trim();
+  const dateStr = new Date().toISOString().replace(/[:.]/g, '-');
+  const actualFilename = filename || `solemission-mongodb-backup-${dateStr}.json`;
+  const fileSizeKB = (Buffer.byteLength(backupJsonString, 'utf8') / 1024).toFixed(2);
+  const formattedDate = new Date().toLocaleString('en-US', {
+    timeZone: 'UTC',
+    dateStyle: 'full',
+    timeStyle: 'long',
+  });
+
+  const mailOptions = {
+    from: `"Sole Mission Database Backup" <${process.env.EMAIL_USER?.trim()}>`,
+    to: adminEmail,
+    subject: `🗄️ Sole Mission Database Backup - ${new Date().toISOString().split('T')[0]}`,
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background-color: #ffffff;">
+        <div style="border-bottom: 2px solid #2563eb; padding-bottom: 16px; margin-bottom: 20px;">
+          <h2 style="color: #111827; margin: 0; font-size: 22px; font-weight: 700;">Sole Mission Database Backup</h2>
+          <p style="color: #6b7280; margin: 4px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Automated MongoDB Backup System</p>
+        </div>
+        
+        <p style="font-size: 15px; margin: 0 0 16px;">
+          An automated backup of your MongoDB database has been successfully generated and is attached to this email as a JSON file.
+        </p>
+
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin: 20px 0;">
+          <h4 style="margin: 0 0 12px; font-size: 14px; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px;">
+            Backup Summary:
+          </h4>
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+            <tr>
+              <td style="padding: 6px 0; color: #64748b;">Generated At:</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${formattedDate} (UTC)</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #64748b;">Quotes Backed Up:</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${summary?.quotesCount ?? 0}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #64748b;">Users Backed Up:</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${summary?.usersCount ?? 0}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #64748b;">File Name:</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right; font-family: monospace;">${actualFilename}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #64748b;">File Size:</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${fileSizeKB} KB</td>
+            </tr>
+          </table>
+        </div>
+
+        <p style="font-size: 13px; color: #64748b; margin: 16px 0 0;">
+          <strong>Security Notice:</strong> This backup contains database records. Please store this email and the attachment securely.
+        </p>
+
+        <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0 16px;" />
+        <p style="font-size: 12px; color: #94a3b8; text-align: center; margin: 0;">
+          Sole Mission • Premium Sneaker Care & Restoration
+        </p>
+      </div>
+    `,
+    attachments: [
+      {
+        filename: actualFilename,
+        content: backupJsonString,
+        contentType: 'application/json',
+      },
+    ],
+  };
+
+  return await transporter.sendMail(mailOptions);
+};
+
+
