@@ -89,3 +89,61 @@ export const deleteQuote = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// 5. Update Quote Status (and optional admin notes)
+export const updateQuoteStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, adminNotes } = req.body;
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status field is required in request body.',
+      });
+    }
+
+    const normalizedStatus = String(status).toLowerCase().trim();
+    const allowedStatuses = ['pending', 'approved', 'rejected'];
+
+    if (!allowedStatuses.includes(normalizedStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status "${status}". Allowed values: ${allowedStatuses.join(', ')}`,
+      });
+    }
+
+    const isObjectId = mongoose.Types.ObjectId.isValid(id);
+    const filter = isObjectId ? { _id: id } : { reference: id };
+
+    const updateFields = { status: normalizedStatus };
+    if (adminNotes !== undefined) {
+      updateFields.adminNotes = adminNotes;
+    }
+
+    const updatedQuote = await Quote.findOneAndUpdate(
+      filter,
+      { $set: updateFields },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedQuote) {
+      return res.status(404).json({
+        success: false,
+        message: 'Quote not found.',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Quote status updated to "${normalizedStatus}" successfully.`,
+      data: updatedQuote,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error while updating quote status.',
+    });
+  }
+};
+
