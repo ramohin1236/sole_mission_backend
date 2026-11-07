@@ -19,6 +19,14 @@ const formatCAD = (est) => {
   return est.rangeFormatted ? `${est.rangeFormatted.replace(/৳/g, '$')}` : 'Under Review';
 };
 
+const photoSlotLabels = {
+  front: 'Front Toe Box',
+  outer: 'Outside',
+  inner: 'Inside',
+  heel: 'Heel / Back',
+  outsole: 'Bottom',
+};
+
 /**
  * Extract photo details (label, url) from quote.photos
  * Supports both slot-based objects and arrays of photo objects / strings
@@ -35,7 +43,8 @@ const extractPhotoList = (photos) => {
           return { label: `Photo ${idx + 1}`, url: item };
         }
         const url = item.previewUrl || item.url || item.secure_url;
-        const label = item.slot || item.fileName || `Photo ${idx + 1}`;
+        const slotKey = (item.slot || '').toLowerCase();
+        const label = photoSlotLabels[slotKey] || item.slot || item.fileName || `Photo ${idx + 1}`;
         return url ? { label, url } : null;
       })
       .filter(Boolean);
@@ -45,14 +54,15 @@ const extractPhotoList = (photos) => {
     return Object.entries(rawPhotos)
       .map(([slot, p]) => {
         if (!p) return null;
+        const slotKey = slot.toLowerCase();
+        const label = photoSlotLabels[slotKey] || (slot.charAt(0).toUpperCase() + slot.slice(1));
         if (typeof p === 'string') {
           return {
-            label: slot.charAt(0).toUpperCase() + slot.slice(1),
+            label,
             url: p,
           };
         }
         const url = p.previewUrl || p.url || p.secure_url;
-        const label = slot.charAt(0).toUpperCase() + slot.slice(1);
         return url ? { label, url, fileName: p.fileName } : null;
       })
       .filter(Boolean);
