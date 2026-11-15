@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
@@ -413,3 +414,91 @@ export const changePassword = async (req, res) => {
     });
   }
 };
+
+/**
+ * @desc    Get all users (excluding passwords and OTP fields)
+ * @route   GET /api/auth/users
+ * @access  Private/Admin
+ */
+export const getAllUsers = async (req, res) => {
+  try {
+    const users = await User.find()
+      .select('-password -resetPasswordOtp -resetPasswordOtpExpires')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      count: users.length,
+      data: users,
+    });
+  } catch (error) {
+    console.error('Get all users error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while fetching users.',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Delete a user by ID
+ * @route   DELETE /api/auth/users/:id
+ * @access  Private/Admin
+ */
+export const deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid user ID format.',
+      });
+    }
+
+    const userToDelete = await User.findById(id);
+    if (!userToDelete) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found.',
+      });
+    }
+
+    // Prevent admin from deleting their own logged-in account
+    if (req.user && req.user._id.toString() === id.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: 'You cannot delete your own account.',
+      });
+    }
+
+    // If deleting an admin, ensure at least one admin remains in the system
+    if (userToDelete.role === 'admin') {
+      const adminCount = await User.countDocuments({ role: 'admin' });
+      if (adminCount <= 1) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot delete the only remaining admin account.',
+        });
+      }
+    }
+
+    await User.findByIdAndDelete(id);
+
+    return res.status(200).json({
+      success: true,
+      message: `User ${userToDelete.email} has been deleted successfully.`,
+      deletedUserId: id,
+    });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while deleting user.',
+      error: error.message,
+    });
+  }
+};
+

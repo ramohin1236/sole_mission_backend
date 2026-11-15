@@ -113,6 +113,22 @@ export const sendQuoteNotifications = async (quote) => {
   const formattedEstimate = formatCAD(estimate);
   const photosHtml = renderPhotosHtml(photos);
 
+  const isMailIn =
+    typeof fulfillment === 'string' &&
+    (fulfillment.toLowerCase() === 'mail' ||
+     fulfillment.toLowerCase() === 'mail-in' ||
+     fulfillment.toLowerCase().includes('mail'));
+
+  const mailInInstructionsHtml = isMailIn
+    ? `
+        <div style="background: #f0f7ff; border-left: 4px solid #2563eb; padding: 12px 16px; border-radius: 6px; margin: 16px 0;">
+          <p style="margin: 0; color: #1e3a8a; font-size: 14px; line-height: 1.6;">
+            <strong>Mailing your pair:</strong> please hold on to your shoes for now. Once we've reviewed your photos, we'll email you the shipping address and packing instructions. Your final price is confirmed when the pair is in hand, before any work starts.
+          </p>
+        </div>
+      `
+    : '';
+
   // 1. Customer Confirmation Email (No raw file attachments; Cloudinary URLs rendered in HTML body)
   const customerMailOptions = {
     from: `"Sole Mission" <${process.env.EMAIL_USER?.trim()}>`,
@@ -131,6 +147,7 @@ export const sendQuoteNotifications = async (quote) => {
           <p style="margin: 0;"><strong>Fulfillment:</strong> ${fulfillment === 'dropoff' ? 'Drop-off' : 'Mail-in'} (${turnaround} turnaround)</p>
         </div>
         ${photosHtml}
+        ${mailInInstructionsHtml}
         <p>Our team is currently reviewing your photos. We will reach out to you via <strong>${contact.phone}</strong> or email shortly.</p>
         <p style="font-size: 13px; color: #777; margin-top: 25px;">Sole Mission • Premium Sneaker Care & Restoration</p>
       </div>
