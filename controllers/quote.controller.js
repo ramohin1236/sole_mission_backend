@@ -134,6 +134,13 @@ export const updateQuoteStatus = async (req, res) => {
       });
     }
 
+    // Send cancellation/rejection email to customer if status is rejected
+    if (normalizedStatus === 'rejected' && updatedQuote.contact?.email) {
+      await sendQuoteCancellationEmail(updatedQuote).catch((err) =>
+        console.error('Rejection email notification error:', err.message)
+      );
+    }
+
     res.status(200).json({
       success: true,
       message: `Quote status updated to "${normalizedStatus}" successfully.`,
