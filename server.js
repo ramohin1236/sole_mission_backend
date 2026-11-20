@@ -22,6 +22,7 @@ const allowedOrigins = [
   'https://sole-mission-gules.vercel.app',
   'https://sole-mission.mohinr26.workers.dev',
   'https://solemission.ca',
+  'https://www.solemission.ca',
   'https://sole-mission.solemission905.workers.dev',
 ];
 
