@@ -1,4 +1,3 @@
-import mongoose from 'mongoose';
 import Quote from '../models/Quote.js';
 import User from '../models/User.js';
 import BackupLog from '../models/BackupLog.js';
@@ -6,7 +5,7 @@ import { sendBackupEmail } from '../utils/emailService.js';
 
 /**
  * GET /api/backup
- * Generates a JSON backup of essential MongoDB collections (Quotes, Users),
+ * Generates a JSON backup of essential tables (Quotes, Users),
  * sends it as an attachment to the admin email via Nodemailer,
  * and records a BackupLog entry with status 'success' or 'failed'.
  */
@@ -14,22 +13,16 @@ export const generateBackup = async (req, res) => {
   const type = req.backupType || 'manual';
 
   try {
-    // Ensure MongoDB connection is active
-    if (mongoose.connection.readyState !== 1) {
-      if (!process.env.MONGODB_URI) {
-        return res.status(500).json({
-          success: false,
-          message: 'MONGODB_URI is not defined in environment variables.',
-        });
-      }
-      await mongoose.connect(process.env.MONGODB_URI);
-    }
-
-    // Fetch essential MongoDB collections
+    // Fetch essential data
     const [quotes, users] = await Promise.all([
       Quote.find().sort({ createdAt: -1 }).lean(),
-      User.find().select('-resetPasswordOtp -resetPasswordOtpExpires').lean(),
+      User.find().lean(),
     ]);
+
+    const sanitizedUsers = users.map((u) => {
+      const { password, resetPasswordOtp, resetPasswordOtpExpires, ...rest } = u;
+      return rest;
+    });
 
     const timestamp = new Date().toISOString();
     const dateFileSlug = timestamp.replace(/[:.]/g, '-');
@@ -44,11 +37,11 @@ export const generateBackup = async (req, res) => {
         exportedAt: timestamp,
         counts: {
           quotes: quotes.length,
-          users: users.length,
+          users: sanitizedUsers.length,
         },
       },
       quotes,
-      users,
+      users: sanitizedUsers,
     };
 
     // Format data into formatted JSON string
@@ -62,11 +55,11 @@ export const generateBackup = async (req, res) => {
       filename,
       summary: {
         quotesCount: quotes.length,
-        usersCount: users.length,
+        usersCount: sanitizedUsers.length,
       },
     });
 
-    // Create BackupLog in MongoDB with status 'success'
+    // Create BackupLog with status 'success'
     let logDoc = null;
     try {
       logDoc = await BackupLog.create({
@@ -76,7 +69,7 @@ export const generateBackup = async (req, res) => {
         fileSize: `${fileSizeKB} KB`,
         recordsCount: {
           quotes: quotes.length,
-          users: users.length,
+          users: sanitizedUsers.length,
         },
         recipient,
         createdAt: new Date(),
@@ -93,19 +86,19 @@ export const generateBackup = async (req, res) => {
         fileSizeKB: `${fileSizeKB} KB`,
         recordsCount: {
           quotes: quotes.length,
-          users: users.length,
+          users: sanitizedUsers.length,
         },
         recipient,
-        messageId: emailInfo.messageId,
+        messageId: emailInfo?.messageId,
         timestamp,
         type,
-        logId: logDoc?._id,
+        logId: logDoc?._id || logDoc?.id,
       },
     });
   } catch (error) {
     console.error('Backup generation error:', error);
 
-    // Save BackupLog in MongoDB with status 'failed'
+    // Save BackupLog with status 'failed'
     try {
       await BackupLog.create({
         type,
@@ -126,25 +119,11 @@ export const generateBackup = async (req, res) => {
 
 /**
  * GET /api/backup/history
- * Fetches the latest 50 backup logs from MongoDB, sorted by newest first.
+ * Fetches the latest 50 backup logs, sorted by newest first.
  */
 export const getBackupHistory = async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) {
-      if (!process.env.MONGODB_URI) {
-        return res.status(500).json({
-          success: false,
-          message: 'MONGODB_URI is not defined in environment variables.',
-        });
-      }
-      await mongoose.connect(process.env.MONGODB_URI);
-    }
-
-    const logs = await BackupLog.find()
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .lean();
-
+    const logs = await BackupLog.find().sort({ createdAt: -1 }).limit(50).lean();
     const totalCount = await BackupLog.countDocuments();
 
     return res.status(200).json({

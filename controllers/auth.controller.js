@@ -1,4 +1,3 @@
-import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
@@ -77,14 +76,15 @@ export const login = async (req, res) => {
       }
     }
 
-    const token = generateToken(user._id, user.email, user.role);
+    const token = generateToken(user.id || user._id, user.email, user.role);
 
     return res.status(200).json({
       success: true,
       message: 'Login successful',
       token,
       user: {
-        id: user._id,
+        id: user.id || user._id,
+        _id: user._id || String(user.id),
         name: user.name,
         email: user.email,
         role: user.role,
@@ -109,7 +109,8 @@ export const login = async (req, res) => {
  */
 export const getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
+    const userId = req.user.id || req.user._id;
+    const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -120,7 +121,8 @@ export const getMe = async (req, res) => {
     return res.status(200).json({
       success: true,
       user: {
-        id: user._id,
+        id: user.id || user._id,
+        _id: user._id || String(user.id),
         name: user.name,
         email: user.email,
         role: user.role,
@@ -381,7 +383,8 @@ export const changePassword = async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.user.id);
+    const userId = req.user.id || req.user._id;
+    const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -422,15 +425,17 @@ export const changePassword = async (req, res) => {
  */
 export const getAllUsers = async (req, res) => {
   try {
-    const users = await User.find()
-      .select('-password -resetPasswordOtp -resetPasswordOtpExpires')
-      .sort({ createdAt: -1 })
-      .lean();
+    const users = await User.find();
+
+    const sanitizedUsers = users.map((u) => {
+      const { password, resetPasswordOtp, resetPasswordOtpExpires, ...rest } = u;
+      return rest;
+    });
 
     return res.status(200).json({
       success: true,
-      count: users.length,
-      data: users,
+      count: sanitizedUsers.length,
+      data: sanitizedUsers,
     });
   } catch (error) {
     console.error('Get all users error:', error);
@@ -451,14 +456,15 @@ export const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    if (!id || isNaN(Number(id))) {
       return res.status(400).json({
         success: false,
         message: 'Invalid user ID format.',
       });
     }
 
-    const userToDelete = await User.findById(id);
+    const numericId = Number(id);
+    const userToDelete = await User.findById(numericId);
     if (!userToDelete) {
       return res.status(404).json({
         success: false,
@@ -467,7 +473,8 @@ export const deleteUser = async (req, res) => {
     }
 
     // Prevent admin from deleting their own logged-in account
-    if (req.user && req.user._id.toString() === id.toString()) {
+    const loggedInId = req.user ? (req.user.id || req.user._id) : null;
+    if (loggedInId && String(loggedInId) === String(id)) {
       return res.status(400).json({
         success: false,
         message: 'You cannot delete your own account.',
@@ -485,7 +492,7 @@ export const deleteUser = async (req, res) => {
       }
     }
 
-    await User.findByIdAndDelete(id);
+    await User.findByIdAndDelete(numericId);
 
     return res.status(200).json({
       success: true,
@@ -501,4 +508,3 @@ export const deleteUser = async (req, res) => {
     });
   }
 };
-

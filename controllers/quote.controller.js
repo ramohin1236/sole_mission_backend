@@ -1,4 +1,3 @@
-import mongoose from 'mongoose';
 import Quote from '../models/Quote.js';
 import { generateUniqueReference } from '../utils/referenceGenerator.js';
 import { sendQuoteNotifications, sendQuoteCancellationEmail } from '../utils/emailService.js';
@@ -48,12 +47,12 @@ export const getAllQuotes = async (req, res) => {
   }
 };
 
-// 3. Get Single Quote (By MongoDB _id or Reference)
+// 3. Get Single Quote (By MySQL id or Reference)
 export const getQuoteById = async (req, res) => {
   try {
     const { id } = req.params;
-    const isObjectId = mongoose.Types.ObjectId.isValid(id);
-    const quote = isObjectId ? await Quote.findById(id) : await Quote.findOne({ reference: id });
+    const isNumericId = id !== undefined && id !== null && String(id).trim() !== '' && !isNaN(Number(id));
+    const quote = isNumericId ? await Quote.findById(Number(id)) : await Quote.findOne({ reference: id });
 
     if (!quote) return res.status(404).json({ success: false, message: 'Quote not found.' });
     res.status(200).json({ success: true, data: quote });
@@ -66,9 +65,9 @@ export const getQuoteById = async (req, res) => {
 export const deleteQuote = async (req, res) => {
   try {
     const { id } = req.params;
-    const isObjectId = mongoose.Types.ObjectId.isValid(id);
-    const deleted = isObjectId
-      ? await Quote.findByIdAndDelete(id)
+    const isNumericId = id !== undefined && id !== null && String(id).trim() !== '' && !isNaN(Number(id));
+    const deleted = isNumericId
+      ? await Quote.findByIdAndDelete(Number(id))
       : await Quote.findOneAndDelete({ reference: id });
 
     if (!deleted) return res.status(404).json({ success: false, message: 'Quote not found.' });
@@ -113,8 +112,8 @@ export const updateQuoteStatus = async (req, res) => {
       });
     }
 
-    const isObjectId = mongoose.Types.ObjectId.isValid(id);
-    const filter = isObjectId ? { _id: id } : { reference: id };
+    const isNumericId = id !== undefined && id !== null && String(id).trim() !== '' && !isNaN(Number(id));
+    const filter = isNumericId ? { _id: Number(id) } : { reference: id };
 
     const updateFields = { status: normalizedStatus };
     if (adminNotes !== undefined) {
@@ -153,4 +152,3 @@ export const updateQuoteStatus = async (req, res) => {
     });
   }
 };
-

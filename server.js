@@ -1,13 +1,14 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import mongoose from 'mongoose';
-import connectDB from './config/db.js';
+import cron from 'node-cron';
+import { getPool, connectDB } from './config/db.js';
 import uploadRoutes from './routes/upload.route.js';
 import quoteRoutes from './routes/quote.route.js';
 import authRoutes from './routes/auth.route.js';
 import userRoutes from './routes/user.route.js';
 import backupRoutes from './routes/backup.route.js';
+import { generateBackup } from './controllers/backup.controller.js';
 
 // Load environment variables
 dotenv.config();
@@ -43,12 +44,20 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Default / Health check route
-app.get('/', (req, res) => {
-  const readyStates = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+app.get('/', async (req, res) => {
+  let dbStatus = 'disconnected';
+  try {
+    const pool = getPool();
+    await pool.query('SELECT 1');
+    dbStatus = 'connected';
+  } catch (err) {
+    dbStatus = 'disconnected';
+  }
+
   res.json({
     status: 'success',
     message: `Sole Mission Backend server is running on port ${PORT}`,
-    database: readyStates[mongoose.connection.readyState] || 'unknown',
+    database: dbStatus,
     timestamp: new Date().toISOString(),
   });
 });
@@ -59,22 +68,22 @@ app.get('/api/health', async (req, res) => {
   let dbError = null;
 
   try {
-    await connectDB();
+    const pool = getPool();
+    await pool.query('SELECT 1');
     dbStatus = 'connected';
   } catch (err) {
     dbStatus = 'error';
     dbError = err.message;
   }
 
-  const readyStates = ['disconnected', 'connected', 'connecting', 'disconnecting'];
-
   res.status(dbStatus === 'connected' ? 200 : 503).json({
     status: dbStatus === 'connected' ? 'ok' : 'degraded',
     server: 'running',
     database: {
       status: dbStatus,
-      state: readyStates[mongoose.connection.readyState] || mongoose.connection.readyState,
-      uriConfigured: Boolean(process.env.MONGODB_URI),
+      state: dbStatus === 'connected' ? 'connected' : 'disconnected',
+      hostConfigured: Boolean(process.env.DB_HOST),
+      databaseConfigured: Boolean(process.env.DB_NAME),
       error: dbError,
     },
     timestamp: new Date().toISOString(),
@@ -85,13 +94,14 @@ app.get('/api/health', async (req, res) => {
 app.use(async (req, res, next) => {
   if (req.path.startsWith('/api') && req.path !== '/api/health') {
     try {
-      await connectDB();
+      const pool = getPool();
+      await pool.query('SELECT 1');
       next();
     } catch (err) {
       console.error('Database connection error on API request:', err.message);
       return res.status(503).json({
         success: false,
-        message: 'Database connection failed. Please ensure MongoDB Atlas Network Access (0.0.0.0/0) and MONGODB_URI are configured.',
+        message: 'Database connection failed. Please ensure MySQL database is running and environment variables are configured.',
         error: err.message,
       });
     }
@@ -121,17 +131,20 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Mongoose connection event listeners
-mongoose.connection.on('connected', () => {
-  console.log('Mongoose connected to MongoDB');
-});
-
-mongoose.connection.on('error', (err) => {
-  console.error('Mongoose connection error:', err.message);
-});
-
-mongoose.connection.on('disconnected', () => {
-  console.warn('Mongoose disconnected from MongoDB');
+// Daily midnight automated database backup cron job
+cron.schedule('0 0 * * *', async () => {
+  console.log('⏰ Running automated daily database backup...');
+  try {
+    const mockReq = { backupType: 'auto' };
+    const mockRes = {
+      status: () => ({
+        json: (data) => console.log('Automated cron backup result:', data?.message || data),
+      }),
+    };
+    await generateBackup(mockReq, mockRes);
+  } catch (cronErr) {
+    console.error('Automated cron backup error:', cronErr.message);
+  }
 });
 
 // Start Server
@@ -139,7 +152,7 @@ const startServer = async () => {
   try {
     await connectDB();
   } catch (error) {
-    console.error('Initial MongoDB connection error:', error.message);
+    console.error('Initial MySQL connection error:', error.message);
   }
 
   app.listen(PORT, () => {

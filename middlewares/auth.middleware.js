@@ -27,7 +27,7 @@ export const protect = async (req, res, next) => {
       process.env.JWT_SECRET || 'solemission_jwt_secret_default_key_2026'
     );
 
-    const user = await User.findById(decoded.id).select('-password');
+    const user = await User.findById(decoded.id);
 
     if (!user) {
       return res.status(401).json({
