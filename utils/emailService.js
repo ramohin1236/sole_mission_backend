@@ -1,24 +1,19 @@
-import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.EMAIL_USER?.trim(),
-    pass: process.env.EMAIL_PASSWORD?.trim(),
-  },
-});
-
+/**
+ * Format currency estimate to CAD string
+ */
 const formatCAD = (est) => {
   if (!est) return 'Under Review';
   if (est.low && est.high) return est.low === est.high ? `$${est.low} CAD` : `$${est.low} - $${est.high} CAD`;
   return est.rangeFormatted ? `${est.rangeFormatted.replace(/৳/g, '$')}` : 'Under Review';
 };
 
+/**
+ * Display labels for the 5 uploaded photos
+ */
 const photoSlotLabels = {
   front: 'Front Toe Box',
   outer: 'Outside',
@@ -105,19 +100,121 @@ const renderPhotosHtml = (photos) => {
 };
 
 /**
+ * Central Brevo Transactional Email REST API client using native Node fetch
+ * Endpoint: POST https://api.brevo.com/v3/smtp/email
+ */
+export const sendBrevoEmail = async ({
+  senderName = 'Sole Mission',
+  to,
+  subject,
+  htmlContent,
+  attachments = [],
+}) => {
+  const apiKey = process.env.BREVO_API_KEY?.trim();
+  const senderEmail = process.env.EMAIL_FROM?.trim() || process.env.EMAIL_USER?.trim() || 'bookings@solemission.ca';
+
+  if (!apiKey) {
+    const err = new Error('Brevo API key missing: process.env.BREVO_API_KEY is not configured in .env');
+    console.error('❌ Email dispatch failed:', err.message);
+    throw err;
+  }
+
+  // Normalize recipient list
+  let toList = [];
+  if (Array.isArray(to)) {
+    toList = to.map((item) => (typeof item === 'string' ? { email: item.trim() } : item));
+  } else if (typeof to === 'string') {
+    toList = [{ email: to.trim() }];
+  } else if (to && typeof to === 'object' && to.email) {
+    toList = [to];
+  }
+
+  if (!toList.length || !toList[0].email) {
+    const err = new Error('No valid recipient email address provided.');
+    console.error('❌ Email dispatch failed:', err.message);
+    throw err;
+  }
+
+  const payload = {
+    sender: {
+      name: senderName,
+      email: senderEmail,
+    },
+    to: toList,
+    subject,
+    htmlContent,
+  };
+
+  // Convert attachments to Brevo's [{ name, content }] base64 format if present
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    payload.attachment = attachments.map((att) => {
+      let base64Content = '';
+      if (Buffer.isBuffer(att.content)) {
+        base64Content = att.content.toString('base64');
+      } else if (typeof att.content === 'string') {
+        base64Content = att.isBase64
+          ? att.content
+          : Buffer.from(att.content, 'utf8').toString('base64');
+      }
+      return {
+        name: att.name || att.filename || 'attachment',
+        content: base64Content,
+      };
+    });
+  }
+
+  try {
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'api-key': apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const responseText = await response.text();
+    let responseData = null;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch {
+      responseData = responseText;
+    }
+
+    if (!response.ok) {
+      console.error('❌ Brevo Email API error response from GoDaddy host:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: responseData,
+        recipient: toList,
+        subject,
+      });
+      const errorDetail = typeof responseData === 'object' ? JSON.stringify(responseData) : String(responseData);
+      throw new Error(`Brevo API Error (${response.status} ${response.statusText}): ${errorDetail}`);
+    }
+
+    return responseData || { messageId: 'brevo-success' };
+  } catch (error) {
+    console.error('❌ Brevo HTTP request error:', error.message);
+    throw error;
+  }
+};
+
+/**
  * Send email notifications to both Customer and Admin/Receiver
  */
 export const sendQuoteNotifications = async (quote) => {
   const { reference, brand, model, condition, services, contact, turnaround, fulfillment, estimate, photos } = quote;
-  const adminEmail = process.env.RECEIVER_EMAIL?.trim() || process.env.EMAIL_USER?.trim();
+  const adminEmail = process.env.RECEIVER_EMAIL?.trim() || process.env.EMAIL_FROM?.trim() || process.env.EMAIL_USER?.trim() || 'bookings@solemission.ca';
   const formattedEstimate = formatCAD(estimate);
   const photosHtml = renderPhotosHtml(photos);
 
   const isMailIn =
     typeof fulfillment === 'string' &&
     (fulfillment.toLowerCase() === 'mail' ||
-     fulfillment.toLowerCase() === 'mail-in' ||
-     fulfillment.toLowerCase().includes('mail'));
+      fulfillment.toLowerCase() === 'mail-in' ||
+      fulfillment.toLowerCase().includes('mail'));
 
   const mailInInstructionsHtml = isMailIn
     ? `
@@ -129,157 +226,153 @@ export const sendQuoteNotifications = async (quote) => {
       `
     : '';
 
-  // 1. Customer Confirmation Email (No raw file attachments; Cloudinary URLs rendered in HTML body)
-  const customerMailOptions = {
-    from: `"Sole Mission" <${process.env.EMAIL_USER?.trim()}>`,
-    to: contact.email,
-    subject: `Quote Received [${reference}] - Sole Mission`,
-    html: `
-      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #222; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
-        <h2 style="color: #111; margin-bottom: 5px;">Sole Mission Restoration</h2>
-        <p>Hi <strong>${contact.fullName}</strong>,</p>
-        <p>Thank you for submitting your sneaker restoration quote. We have received your request!</p>
-        <div style="background: #f7f7f7; padding: 15px; border-radius: 6px; margin: 15px 0;">
-          <p style="margin: 0 0 8px;"><strong>Quote Reference:</strong> <span style="color: #0066cc;">${reference}</span></p>
-          <p style="margin: 0 0 8px;"><strong>Sneaker:</strong> ${brand} - ${model} (${condition})</p>
-          <p style="margin: 0 0 8px;"><strong>Services:</strong> ${services?.join(', ')}</p>
-          <p style="margin: 0 0 8px;"><strong>Estimated Price:</strong> ${formattedEstimate}</p>
-          <p style="margin: 0;"><strong>Fulfillment:</strong> ${fulfillment === 'dropoff' ? 'Drop-off' : 'Mail-in'} (${turnaround} turnaround)</p>
-        </div>
-        ${photosHtml}
-        ${mailInInstructionsHtml}
-        <p>Our team is currently reviewing your photos. We will reach out to you via <strong>${contact.phone}</strong> or email shortly.</p>
-        <p style="font-size: 13px; color: #777; margin-top: 25px;">Sole Mission • Premium Sneaker Care & Restoration</p>
+  // 1. Customer Confirmation Email
+  const customerEmailHtml = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #222; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+      <h2 style="color: #111; margin-bottom: 5px;">Sole Mission Restoration</h2>
+      <p>Hi <strong>${contact.fullName}</strong>,</p>
+      <p>Thank you for submitting your sneaker restoration quote. We have received your request!</p>
+      <div style="background: #f7f7f7; padding: 15px; border-radius: 6px; margin: 15px 0;">
+        <p style="margin: 0 0 8px;"><strong>Quote Reference:</strong> <span style="color: #0066cc;">${reference}</span></p>
+        <p style="margin: 0 0 8px;"><strong>Sneaker:</strong> ${brand} - ${model} (${condition})</p>
+        <p style="margin: 0 0 8px;"><strong>Services:</strong> ${services?.join(', ')}</p>
+        <p style="margin: 0 0 8px;"><strong>Estimated Price:</strong> ${formattedEstimate}</p>
+        <p style="margin: 0;"><strong>Fulfillment:</strong> ${fulfillment === 'dropoff' ? 'Drop-off' : 'Mail-in'} (${turnaround} turnaround)</p>
       </div>
-    `,
-  };
+      ${photosHtml}
+      ${mailInInstructionsHtml}
+      <p>Our team is currently reviewing your photos. We will reach out to you via <strong>${contact.phone}</strong> or email shortly.</p>
+      <p style="font-size: 13px; color: #777; margin-top: 25px;">Sole Mission • Premium Sneaker Care & Restoration</p>
+    </div>
+  `;
 
-  // 2. Admin Notification Email (No raw file attachments; Cloudinary URLs rendered in HTML body)
-  const adminMailOptions = {
-    from: `"Sole Mission Alerts" <${process.env.EMAIL_USER?.trim()}>`,
-    to: adminEmail,
-    subject: `👟 New Quote [${reference}] - ${contact.fullName}`,
-    html: `
-      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #222; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
-        <h2 style="color: #d9534f; margin-bottom: 5px;">New Quote Request: ${reference}</h2>
-        <div style="background: #f7f7f7; padding: 15px; border-radius: 6px; margin: 15px 0;">
-          <h4 style="margin: 0 0 10px;">Customer Details:</h4>
-          <p style="margin: 0 0 5px;"><strong>Name:</strong> ${contact.fullName}</p>
-          <p style="margin: 0 0 5px;"><strong>Phone:</strong> ${contact.phone}</p>
-          <p style="margin: 0 0 5px;"><strong>Email:</strong> ${contact.email}</p>
-          ${contact.instagram ? `<p style="margin: 0 0 5px;"><strong>Instagram:</strong> ${contact.instagram}</p>` : ''}
-          <hr style="border: none; border-top: 1px solid #ddd; margin: 10px 0;" />
-          <h4 style="margin: 0 0 10px;">Sneaker & Service:</h4>
-          <p style="margin: 0 0 5px;"><strong>Pair:</strong> ${brand} - ${model} (Suede: ${quote.isSuede ? 'Yes' : 'No'})</p>
-          <p style="margin: 0 0 5px;"><strong>Condition:</strong> ${condition}</p>
-          <p style="margin: 0 0 5px;"><strong>Services:</strong> ${services?.join(', ')}</p>
-          <p style="margin: 0 0 5px;"><strong>Estimate:</strong> ${formattedEstimate}</p>
-          <p style="margin: 0;"><strong>Delivery:</strong> ${fulfillment} (${turnaround})</p>
-        </div>
-        ${photosHtml}
+  // 2. Admin Notification Email
+  const adminEmailHtml = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #222; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+      <h2 style="color: #d9534f; margin-bottom: 5px;">New Quote Request: ${reference}</h2>
+      <div style="background: #f7f7f7; padding: 15px; border-radius: 6px; margin: 15px 0;">
+        <h4 style="margin: 0 0 10px;">Customer Details:</h4>
+        <p style="margin: 0 0 5px;"><strong>Name:</strong> ${contact.fullName}</p>
+        <p style="margin: 0 0 5px;"><strong>Phone:</strong> ${contact.phone}</p>
+        <p style="margin: 0 0 5px;"><strong>Email:</strong> ${contact.email}</p>
+        ${contact.instagram ? `<p style="margin: 0 0 5px;"><strong>Instagram:</strong> ${contact.instagram}</p>` : ''}
+        <hr style="border: none; border-top: 1px solid #ddd; margin: 10px 0;" />
+        <h4 style="margin: 0 0 10px;">Sneaker & Service:</h4>
+        <p style="margin: 0 0 5px;"><strong>Pair:</strong> ${brand} - ${model} (Suede: ${quote.isSuede ? 'Yes' : 'No'})</p>
+        <p style="margin: 0 0 5px;"><strong>Condition:</strong> ${condition}</p>
+        <p style="margin: 0 0 5px;"><strong>Services:</strong> ${services?.join(', ')}</p>
+        <p style="margin: 0 0 5px;"><strong>Estimate:</strong> ${formattedEstimate}</p>
+        <p style="margin: 0;"><strong>Delivery:</strong> ${fulfillment} (${turnaround})</p>
       </div>
-    `,
-  };
+      ${photosHtml}
+    </div>
+  `;
 
-  // Explicitly ensure attachments array is never included to avoid provider file size limits
-  delete customerMailOptions.attachments;
-  delete adminMailOptions.attachments;
-
-  // Send both emails simultaneously
+  // Send both emails simultaneously via Brevo REST API
   return await Promise.all([
-    transporter.sendMail(customerMailOptions),
-    transporter.sendMail(adminMailOptions),
+    sendBrevoEmail({
+      senderName: 'Sole Mission',
+      to: [{ email: contact.email.trim(), name: contact.fullName }],
+      subject: `Quote Received [${reference}] - Sole Mission`,
+      htmlContent: customerEmailHtml,
+    }),
+    sendBrevoEmail({
+      senderName: 'Sole Mission Alerts',
+      to: [{ email: adminEmail }],
+      subject: `👟 New Quote [${reference}] - ${contact.fullName}`,
+      htmlContent: adminEmailHtml,
+    }),
   ]);
 };
 
 /**
- * Send cancellation email notification to Customer when quote is deleted/cancelled
+ * Send cancellation/rejection email notification to Customer
  */
 export const sendQuoteCancellationEmail = async (quote) => {
   const { reference, brand, model, contact } = quote;
 
   if (!contact?.email) return;
 
-  const mailOptions = {
-    from: `"Sole Mission" <${process.env.EMAIL_USER?.trim()}>`,
-    to: contact.email,
-    subject: `Quote Request Cancelled [${reference}] - Sole Mission`,
-    html: `
-      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #222; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
-        <h2 style="color: #c9302c; margin-bottom: 5px;">Sole Mission Restoration</h2>
-        <p>Hi <strong>${contact.fullName || 'Valued Customer'}</strong>,</p>
-        <p>This is to inform you that your quote request for sneaker restoration has been <strong>cancelled</strong>.</p>
-        <div style="background: #fdf7f7; border-left: 4px solid #d9534f; padding: 15px; border-radius: 4px; margin: 15px 0;">
-          <p style="margin: 0 0 8px;"><strong>Quote Reference:</strong> <span style="color: #0066cc;">${reference}</span></p>
-          <p style="margin: 0;"><strong>Sneaker:</strong> ${brand || ''} ${model ? `- ${model}` : ''}</p>
-        </div>
-        <p>If you have any questions or feel this was done in error, please reach out to us or submit a new quote request anytime.</p>
-        <p style="font-size: 13px; color: #777; margin-top: 25px;">Sole Mission • Premium Sneaker Care & Restoration</p>
+  const htmlContent = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #222; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+      <h2 style="color: #c9302c; margin-bottom: 5px;">Sole Mission Restoration</h2>
+      <p>Hi <strong>${contact.fullName || 'Valued Customer'}</strong>,</p>
+      <p>This is to inform you that your quote request for sneaker restoration has been <strong>cancelled</strong>.</p>
+      <div style="background: #fdf7f7; border-left: 4px solid #d9534f; padding: 15px; border-radius: 4px; margin: 15px 0;">
+        <p style="margin: 0 0 8px;"><strong>Quote Reference:</strong> <span style="color: #0066cc;">${reference}</span></p>
+        <p style="margin: 0;"><strong>Sneaker:</strong> ${brand || ''} ${model ? `- ${model}` : ''}</p>
       </div>
-    `,
-  };
+      <p>If you have any questions or feel this was done in error, please reach out to us or submit a new quote request anytime.</p>
+      <p style="font-size: 13px; color: #777; margin-top: 25px;">Sole Mission • Premium Sneaker Care & Restoration</p>
+    </div>
+  `;
 
-  return await transporter.sendMail(mailOptions);
+  return await sendBrevoEmail({
+    senderName: 'Sole Mission',
+    to: [{ email: contact.email.trim(), name: contact.fullName || 'Valued Customer' }],
+    subject: `Quote Request Cancelled [${reference}] - Sole Mission`,
+    htmlContent,
+  });
 };
 
 /**
  * Send Password Reset OTP email notification
  */
 export const sendPasswordResetOtpEmail = async ({ email, otp, name }) => {
-  const mailOptions = {
-    from: `"Sole Mission Security" <${process.env.EMAIL_USER?.trim()}>`,
-    to: email,
-    subject: `Your Password Reset Code [${otp}] - Sole Mission`,
-    html: `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; max-width: 540px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background-color: #ffffff;">
-        <div style="text-align: center; margin-bottom: 24px;">
-          <h2 style="color: #111827; margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px;">Sole Mission</h2>
-          <p style="color: #6b7280; margin: 4px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;">Security Verification</p>
-        </div>
-
-        <p style="font-size: 15px; margin: 0 0 12px;">Hi <strong>${name || 'User'}</strong>,</p>
-        <p style="font-size: 14px; color: #4b5563; margin: 0 0 20px;">
-          We received a request to reset or update your password. Please use the verification code below to proceed:
-        </p>
-
-        <div style="background-color: #f9fafb; border: 2px dashed #111827; border-radius: 10px; padding: 20px; text-align: center; margin: 24px 0;">
-          <div style="font-size: 36px; font-weight: 800; letter-spacing: 10px; color: #111827; font-family: 'Courier New', monospace;">
-            ${otp}
-          </div>
-          <p style="font-size: 12px; color: #dc2626; font-weight: 600; margin: 10px 0 0;">
-            ⏱ This code is valid for 10 minutes only
-          </p>
-        </div>
-
-        <p style="font-size: 13px; color: #6b7280; margin: 20px 0 0;">
-          If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged.
-        </p>
-
-        <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 24px 0 16px;" />
-
-        <div style="text-align: center;">
-          <p style="font-size: 12px; color: #9ca3af; margin: 0;">
-            Sole Mission • Premium Sneaker Care & Restoration
-          </p>
-        </div>
+  const htmlContent = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; max-width: 540px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background-color: #ffffff;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <h2 style="color: #111827; margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px;">Sole Mission</h2>
+        <p style="color: #6b7280; margin: 4px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;">Security Verification</p>
       </div>
-    `,
-  };
 
-  return await transporter.sendMail(mailOptions);
+      <p style="font-size: 15px; margin: 0 0 12px;">Hi <strong>${name || 'User'}</strong>,</p>
+      <p style="font-size: 14px; color: #4b5563; margin: 0 0 20px;">
+        We received a request to reset or update your password. Please use the verification code below to proceed:
+      </p>
+
+      <div style="background-color: #f9fafb; border: 2px dashed #111827; border-radius: 10px; padding: 20px; text-align: center; margin: 24px 0;">
+        <div style="font-size: 36px; font-weight: 800; letter-spacing: 10px; color: #111827; font-family: 'Courier New', monospace;">
+          ${otp}
+        </div>
+        <p style="font-size: 12px; color: #dc2626; font-weight: 600; margin: 10px 0 0;">
+          ⏱ This code is valid for 10 minutes only
+        </p>
+      </div>
+
+      <p style="font-size: 13px; color: #6b7280; margin: 20px 0 0;">
+        If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #f3f4f6; margin: 24px 0 16px;" />
+
+      <div style="text-align: center;">
+        <p style="font-size: 12px; color: #9ca3af; margin: 0;">
+          Sole Mission • Premium Sneaker Care & Restoration
+        </p>
+      </div>
+    </div>
+  `;
+
+  return await sendBrevoEmail({
+    senderName: 'Sole Mission Security',
+    to: [{ email: email.trim(), name: name || 'User' }],
+    subject: `Your Password Reset Code [${otp}] - Sole Mission`,
+    htmlContent,
+  });
 };
 
 /**
- * Send Database JSON Backup email notification with attachment
+ * Send Database JSON Backup email notification with base64 attachment
  */
 export const sendBackupEmail = async ({
   backupJsonString,
   filename,
   summary,
 }) => {
-  const adminEmail = process.env.RECEIVER_EMAIL?.trim() || process.env.EMAIL_USER?.trim();
+  const adminEmail = process.env.RECEIVER_EMAIL?.trim() || process.env.EMAIL_FROM?.trim() || process.env.EMAIL_USER?.trim() || 'bookings@solemission.ca';
   const dateStr = new Date().toISOString().replace(/[:.]/g, '-');
-  const actualFilename = filename || `solemission-mongodb-backup-${dateStr}.json`;
+  const actualFilename = filename || `solemission-backup-${dateStr}.json`;
   const fileSizeKB = (Buffer.byteLength(backupJsonString, 'utf8') / 1024).toFixed(2);
   const formattedDate = new Date().toLocaleString('en-US', {
     timeZone: 'UTC',
@@ -287,69 +380,69 @@ export const sendBackupEmail = async ({
     timeStyle: 'long',
   });
 
-  const mailOptions = {
-    from: `"Sole Mission Database Backup" <${process.env.EMAIL_USER?.trim()}>`,
-    to: adminEmail,
-    subject: `🗄️ Sole Mission Database Backup - ${new Date().toISOString().split('T')[0]}`,
-    html: `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background-color: #ffffff;">
-        <div style="border-bottom: 2px solid #2563eb; padding-bottom: 16px; margin-bottom: 20px;">
-          <h2 style="color: #111827; margin: 0; font-size: 22px; font-weight: 700;">Sole Mission Database Backup</h2>
-          <p style="color: #6b7280; margin: 4px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Automated MongoDB Backup System</p>
-        </div>
-        
-        <p style="font-size: 15px; margin: 0 0 16px;">
-          An automated backup of your MongoDB database has been successfully generated and is attached to this email as a JSON file.
-        </p>
+  const base64Content = Buffer.from(backupJsonString, 'utf8').toString('base64');
 
-        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin: 20px 0;">
-          <h4 style="margin: 0 0 12px; font-size: 14px; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px;">
-            Backup Summary:
-          </h4>
-          <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-            <tr>
-              <td style="padding: 6px 0; color: #64748b;">Generated At:</td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${formattedDate} (UTC)</td>
-            </tr>
-            <tr>
-              <td style="padding: 6px 0; color: #64748b;">Quotes Backed Up:</td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${summary?.quotesCount ?? 0}</td>
-            </tr>
-            <tr>
-              <td style="padding: 6px 0; color: #64748b;">Users Backed Up:</td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${summary?.usersCount ?? 0}</td>
-            </tr>
-            <tr>
-              <td style="padding: 6px 0; color: #64748b;">File Name:</td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right; font-family: monospace;">${actualFilename}</td>
-            </tr>
-            <tr>
-              <td style="padding: 6px 0; color: #64748b;">File Size:</td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${fileSizeKB} KB</td>
-            </tr>
-          </table>
-        </div>
-
-        <p style="font-size: 13px; color: #64748b; margin: 16px 0 0;">
-          <strong>Security Notice:</strong> This backup contains database records. Please store this email and the attachment securely.
-        </p>
-
-        <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0 16px;" />
-        <p style="font-size: 12px; color: #94a3b8; text-align: center; margin: 0;">
-          Sole Mission • Premium Sneaker Care & Restoration
-        </p>
+  const htmlContent = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background-color: #ffffff;">
+      <div style="border-bottom: 2px solid #2563eb; padding-bottom: 16px; margin-bottom: 20px;">
+        <h2 style="color: #111827; margin: 0; font-size: 22px; font-weight: 700;">Sole Mission Database Backup</h2>
+        <p style="color: #6b7280; margin: 4px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Automated Database Backup System</p>
       </div>
-    `,
+      
+      <p style="font-size: 15px; margin: 0 0 16px;">
+        An automated backup of your database has been successfully generated and is attached to this email as a JSON file.
+      </p>
+
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin: 20px 0;">
+        <h4 style="margin: 0 0 12px; font-size: 14px; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px;">
+          Backup Summary:
+        </h4>
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr>
+            <td style="padding: 6px 0; color: #64748b;">Generated At:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${formattedDate} (UTC)</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b;">Quotes Backed Up:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${summary?.quotesCount ?? 0}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b;">Users Backed Up:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${summary?.usersCount ?? 0}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b;">File Name:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right; font-family: monospace;">${actualFilename}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b;">File Size:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${fileSizeKB} KB</td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="font-size: 13px; color: #64748b; margin: 16px 0 0;">
+        <strong>Security Notice:</strong> This backup contains database records. Please store this email and the attachment securely.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0 16px;" />
+      <p style="font-size: 12px; color: #94a3b8; text-align: center; margin: 0;">
+        Sole Mission • Premium Sneaker Care & Restoration
+      </p>
+    </div>
+  `;
+
+  return await sendBrevoEmail({
+    senderName: 'Sole Mission Database Backup',
+    to: [{ email: adminEmail }],
+    subject: `🗄️ Sole Mission Database Backup - ${new Date().toISOString().split('T')[0]}`,
+    htmlContent,
     attachments: [
       {
-        filename: actualFilename,
-        content: backupJsonString,
-        contentType: 'application/json',
+        name: actualFilename,
+        content: base64Content,
+        isBase64: true,
       },
     ],
-  };
-
-  return await transporter.sendMail(mailOptions);
+  });
 };
-
-

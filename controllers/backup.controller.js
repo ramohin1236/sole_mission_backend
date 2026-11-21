@@ -6,7 +6,7 @@ import { sendBackupEmail } from '../utils/emailService.js';
 /**
  * GET /api/backup
  * Generates a JSON backup of essential tables (Quotes, Users),
- * sends it as an attachment to the admin email via Nodemailer,
+ * sends it as an attachment to the admin email via Brevo REST API,
  * and records a BackupLog entry with status 'success' or 'failed'.
  */
 export const generateBackup = async (req, res) => {
@@ -49,7 +49,7 @@ export const generateBackup = async (req, res) => {
     const fileSizeKB = (Buffer.byteLength(jsonString, 'utf8') / 1024).toFixed(2);
     const recipient = process.env.RECEIVER_EMAIL?.trim() || process.env.EMAIL_USER?.trim();
 
-    // Dispatch email with .json attachment using Nodemailer setup
+    // Dispatch email with .json attachment using Brevo REST API setup
     const emailInfo = await sendBackupEmail({
       backupJsonString: jsonString,
       filename,
