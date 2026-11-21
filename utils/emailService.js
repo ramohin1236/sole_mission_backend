@@ -363,24 +363,139 @@ export const sendPasswordResetOtpEmail = async ({ email, otp, name }) => {
 };
 
 /**
- * Send Database JSON Backup email notification with base64 attachment
+ * Escape CSV fields according to RFC 4180
+ */
+const escapeCSV = (value) => {
+  if (value === null || value === undefined) return '""';
+  const str = String(value);
+  return `"${str.replace(/"/g, '""')}"`;
+};
+
+/**
+ * Convert quotes list to a well-formatted CSV string with UTF-8 BOM
+ */
+export const quotesToCSV = (quotes = []) => {
+  const headers = [
+    'Reference',
+    'Date (UTC)',
+    'Status',
+    'Customer Name',
+    'Customer Email',
+    'Customer Phone',
+    'Instagram',
+    'Preferred Contact',
+    'Brand',
+    'Model',
+    'Condition',
+    'Is Suede',
+    'Services',
+    'Add-Ons',
+    'Turnaround',
+    'Fulfillment',
+    'Estimated Price',
+    'Photos Count',
+    'Admin Notes',
+  ];
+
+  const rows = (quotes || []).map((q) => {
+    const contact = typeof q.contact === 'string' ? JSON.parse(q.contact || '{}') : (q.contact || {});
+    const estimate = typeof q.estimate === 'string' ? JSON.parse(q.estimate || '{}') : (q.estimate || {});
+    const services = typeof q.services === 'string' ? JSON.parse(q.services || '[]') : (q.services || []);
+    const addOns = typeof q.addOns === 'string' ? JSON.parse(q.addOns || '[]') : (q.addOns || []);
+    const photos = typeof q.photos === 'string' ? JSON.parse(q.photos || '{}') : (q.photos || {});
+
+    const estText = estimate.rangeFormatted
+      ? estimate.rangeFormatted.replace(/৳/g, '$')
+      : (estimate.low && estimate.high)
+      ? (estimate.low === estimate.high ? `$${estimate.low} CAD` : `$${estimate.low} - $${estimate.high} CAD`)
+      : 'Under Review';
+
+    const servicesText = Array.isArray(services)
+      ? services.map((s) => (typeof s === 'string' ? s : s?.name || s?.title || s?.service || JSON.stringify(s))).join('; ')
+      : '';
+
+    const addOnsText = Array.isArray(addOns)
+      ? addOns.map((a) => (typeof a === 'string' ? a : a?.name || a?.title || a?.addon || JSON.stringify(a))).join('; ')
+      : '';
+
+    let photoCount = 0;
+    if (Array.isArray(photos)) {
+      photoCount = photos.length;
+    } else if (typeof photos === 'object' && photos) {
+      photoCount = Object.keys(photos).length;
+    }
+
+    return [
+      escapeCSV(q.reference || ''),
+      escapeCSV(q.createdAt ? new Date(q.createdAt).toISOString() : ''),
+      escapeCSV(q.status || 'pending'),
+      escapeCSV(contact.fullName || ''),
+      escapeCSV(contact.email || ''),
+      escapeCSV(contact.phone || ''),
+      escapeCSV(contact.instagram || ''),
+      escapeCSV(contact.preferredContact || ''),
+      escapeCSV(q.brand || ''),
+      escapeCSV(q.model || ''),
+      escapeCSV(q.condition || ''),
+      escapeCSV(q.isSuede ? 'Yes' : 'No'),
+      escapeCSV(servicesText),
+      escapeCSV(addOnsText),
+      escapeCSV(q.turnaround || 'standard'),
+      escapeCSV(q.fulfillment || 'dropoff'),
+      escapeCSV(estText),
+      escapeCSV(photoCount),
+      escapeCSV(q.adminNotes || ''),
+    ].join(',');
+  });
+
+  // Prepend UTF-8 BOM (\uFEFF) so Excel opens UTF-8 characters properly
+  return '\uFEFF' + [headers.map(escapeCSV).join(','), ...rows].join('\r\n');
+};
+
+/**
+ * Send Database Backup email notification with .txt and .csv base64 attachments
+ * (Brevo REST API does not support .json attachments)
  */
 export const sendBackupEmail = async ({
   backupJsonString,
+  quotes = [],
   filename,
   summary,
 }) => {
   const adminEmail = process.env.RECEIVER_EMAIL?.trim() || process.env.EMAIL_FROM?.trim() || process.env.EMAIL_USER?.trim() || 'bookings@solemission.ca';
   const dateStr = new Date().toISOString().replace(/[:.]/g, '-');
-  const actualFilename = filename || `solemission-backup-${dateStr}.json`;
-  const fileSizeKB = (Buffer.byteLength(backupJsonString, 'utf8') / 1024).toFixed(2);
+  
+  // Prepare .txt attachment containing the full database JSON export
+  const txtFilename = filename
+    ? (filename.includes('.json') ? filename.replace(/\.json$/i, '.txt') : filename)
+    : `solemission-backup-${dateStr}.txt`;
+  const base64Txt = Buffer.from(backupJsonString, 'utf8').toString('base64');
+  const txtSizeKB = (Buffer.byteLength(backupJsonString, 'utf8') / 1024).toFixed(2);
+
+  // Prepare .csv attachment containing the formatted quotes table
+  let quotesList = quotes;
+  if ((!quotesList || !quotesList.length) && backupJsonString) {
+    try {
+      const parsed = JSON.parse(backupJsonString);
+      if (Array.isArray(parsed?.quotes)) {
+        quotesList = parsed.quotes;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  const csvContent = quotesToCSV(quotesList);
+  const csvFilename = `solemission-quotes-backup-${dateStr}.csv`;
+  const base64Csv = Buffer.from(csvContent, 'utf8').toString('base64');
+  const csvSizeKB = (Buffer.byteLength(csvContent, 'utf8') / 1024).toFixed(2);
+  const totalSizeKB = (parseFloat(txtSizeKB) + parseFloat(csvSizeKB)).toFixed(2);
+
   const formattedDate = new Date().toLocaleString('en-US', {
     timeZone: 'UTC',
     dateStyle: 'full',
     timeStyle: 'long',
   });
-
-  const base64Content = Buffer.from(backupJsonString, 'utf8').toString('base64');
 
   const htmlContent = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background-color: #ffffff;">
@@ -390,8 +505,13 @@ export const sendBackupEmail = async ({
       </div>
       
       <p style="font-size: 15px; margin: 0 0 16px;">
-        An automated backup of your database has been successfully generated and is attached to this email as a JSON file.
+        An automated backup of your database has been successfully generated and is attached to this email. Two files are attached:
       </p>
+
+      <ul style="font-size: 14px; color: #374151; margin: 0 0 16px; padding-left: 20px; line-height: 1.8;">
+        <li><strong>Full Database Records (<code>${txtFilename}</code>):</strong> Complete database snapshot in text/JSON format for full system recovery.</li>
+        <li><strong>Quotes Spreadsheet (<code>${csvFilename}</code>):</strong> Formatted CSV table ready to view in Microsoft Excel or Google Sheets.</li>
+      </ul>
 
       <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin: 20px 0;">
         <h4 style="margin: 0 0 12px; font-size: 14px; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px;">
@@ -411,18 +531,22 @@ export const sendBackupEmail = async ({
             <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${summary?.usersCount ?? 0}</td>
           </tr>
           <tr>
-            <td style="padding: 6px 0; color: #64748b;">File Name:</td>
-            <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right; font-family: monospace;">${actualFilename}</td>
+            <td style="padding: 6px 0; color: #64748b;">Full Backup File:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right; font-family: monospace; font-size: 12px;">${txtFilename} (${txtSizeKB} KB)</td>
           </tr>
           <tr>
-            <td style="padding: 6px 0; color: #64748b;">File Size:</td>
-            <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${fileSizeKB} KB</td>
+            <td style="padding: 6px 0; color: #64748b;">Quotes CSV File:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right; font-family: monospace; font-size: 12px;">${csvFilename} (${csvSizeKB} KB)</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b;">Combined Size:</td>
+            <td style="padding: 6px 0; color: #0f172a; font-weight: 600; text-align: right;">${totalSizeKB} KB</td>
           </tr>
         </table>
       </div>
 
       <p style="font-size: 13px; color: #64748b; margin: 16px 0 0;">
-        <strong>Security Notice:</strong> This backup contains database records. Please store this email and the attachment securely.
+        <strong>Security Notice:</strong> This backup contains database records. Please store this email and the attachments securely.
       </p>
 
       <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0 16px;" />
@@ -439,8 +563,13 @@ export const sendBackupEmail = async ({
     htmlContent,
     attachments: [
       {
-        name: actualFilename,
-        content: base64Content,
+        name: txtFilename,
+        content: base64Txt,
+        isBase64: true,
+      },
+      {
+        name: csvFilename,
+        content: base64Csv,
         isBase64: true,
       },
     ],

@@ -26,7 +26,9 @@ export const generateBackup = async (req, res) => {
 
     const timestamp = new Date().toISOString();
     const dateFileSlug = timestamp.replace(/[:.]/g, '-');
-    const filename = `solemission-backup-${dateFileSlug}.json`;
+    const txtFilename = `solemission-backup-${dateFileSlug}.txt`;
+    const csvFilename = `solemission-quotes-backup-${dateFileSlug}.csv`;
+    const filename = `${txtFilename}, ${csvFilename}`;
 
     // Construct structured backup object
     const backupData = {
@@ -49,10 +51,11 @@ export const generateBackup = async (req, res) => {
     const fileSizeKB = (Buffer.byteLength(jsonString, 'utf8') / 1024).toFixed(2);
     const recipient = process.env.RECEIVER_EMAIL?.trim() || process.env.EMAIL_USER?.trim();
 
-    // Dispatch email with .json attachment using Brevo REST API setup
+    // Dispatch email with .txt and .csv attachments using Brevo REST API
     const emailInfo = await sendBackupEmail({
       backupJsonString: jsonString,
-      filename,
+      quotes,
+      filename: txtFilename,
       summary: {
         quotesCount: quotes.length,
         usersCount: sanitizedUsers.length,
@@ -83,6 +86,8 @@ export const generateBackup = async (req, res) => {
       message: `Database backup (${type}) generated and sent successfully to ${recipient}`,
       backupSummary: {
         filename,
+        txtFilename,
+        csvFilename,
         fileSizeKB: `${fileSizeKB} KB`,
         recordsCount: {
           quotes: quotes.length,
