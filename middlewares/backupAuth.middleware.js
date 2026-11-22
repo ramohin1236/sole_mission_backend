@@ -18,7 +18,7 @@ const safeCompare = (a, b) => {
  */
 const extractProvidedSecret = (req) => {
   const querySecret = req.query.secret || req.query.key;
-  const headerSecret = req.headers['x-backup-secret'];
+  const headerSecret = req.headers['x-backup-secret'] || req.headers['x-cron-secret'];
   const authHeader = req.headers['authorization'];
   const bearerSecret = authHeader
     ? authHeader.replace(/^Bearer\s+/i, '').trim()
@@ -69,8 +69,14 @@ export const verifyBackupAuth = (req, res, next) => {
     });
   }
 
-  // Determine type: 'auto' if authorized using CRON_SECRET, or if Vercel cron header is present; otherwise 'manual'
-  if (isCronMatch && (!isBackupMatch || req.headers['x-vercel-cron'] || req.query.type === 'auto')) {
+  // Determine type: 'auto' if authorized using CRON_SECRET, or if route/header specifies cron; otherwise 'manual'
+  if (
+    isCronMatch ||
+    req.headers['x-vercel-cron'] ||
+    req.query.type === 'auto' ||
+    req.originalUrl?.includes('/cron') ||
+    req.path?.includes('/cron')
+  ) {
     req.backupType = 'auto';
   } else if (isBackupMatch) {
     req.backupType = 'manual';

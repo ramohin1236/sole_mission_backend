@@ -19,9 +19,22 @@ router.get('/history', verifyBackupHistoryAuth, getBackupHistory);
 
 /**
  * @route   GET /api/backup
- * @desc    Fetch essential MongoDB data, format to JSON, email as attachment, and record BackupLog
+ * @route   POST /api/backup
+ * @desc    Fetch essential MySQL data (quotes, users), format to .txt and .csv, email via Brevo REST API, and record BackupLog
  * @access  Protected (Requires BACKUP_SECRET or CRON_SECRET)
  */
-router.get('/', verifyBackupAuth, generateBackup);
+router.route('/')
+  .get(verifyBackupAuth, generateBackup)
+  .post(verifyBackupAuth, generateBackup);
+
+/**
+ * @route   GET /api/backup/cron
+ * @route   POST /api/backup/cron
+ * @desc    Alternative endpoint for automated / external cron database backup
+ * @access  Protected (Requires CRON_SECRET or BACKUP_SECRET)
+ */
+router.route('/cron')
+  .get(verifyBackupAuth, generateBackup)
+  .post(verifyBackupAuth, generateBackup);
 
 export default router;
