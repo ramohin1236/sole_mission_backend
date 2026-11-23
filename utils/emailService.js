@@ -255,6 +255,7 @@ export const sendQuoteNotifications = async (quote) => {
         <p style="margin: 0 0 5px;"><strong>Name:</strong> ${contact.fullName}</p>
         <p style="margin: 0 0 5px;"><strong>Phone:</strong> ${contact.phone}</p>
         <p style="margin: 0 0 5px;"><strong>Email:</strong> ${contact.email}</p>
+        <p style="margin: 0 0 5px;"><strong>Preferred Contact Method:</strong> ${contact?.preferredContactMethod || contact?.preferredContact || 'Not specified'}</p>
         ${contact.instagram ? `<p style="margin: 0 0 5px;"><strong>Instagram:</strong> ${contact.instagram}</p>` : ''}
         <hr style="border: none; border-top: 1px solid #ddd; margin: 10px 0;" />
         <h4 style="margin: 0 0 10px;">Sneaker & Service:</h4>
